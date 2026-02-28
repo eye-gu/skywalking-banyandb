@@ -99,4 +99,8 @@ var _ = g.DescribeTable("Scanning Streams", func(args helpers.Args) {
 	g.Entry("filter by non-existent tag", helpers.Args{Input: "filter_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("project non-existent tag", helpers.Args{Input: "project_non_existent_tag", Duration: 1 * time.Hour, WantErr: true}),
 	g.Entry("write mixed", helpers.Args{Input: "write_mixed", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("stream float tag all elements", helpers.Args{Input: "float_tag_all", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("stream float tag filter greater than", helpers.Args{Input: "float_tag_filter", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("stream float tag with TYPE_SKIPPING index", helpers.Args{Input: "float_tag_skipping", Duration: 1 * time.Hour, IgnoreElementID: true}),
+	g.Entry("stream float tag with TYPE_INVERTED index", helpers.Args{Input: "float_tag_inverted", Duration: 1 * time.Hour, IgnoreElementID: true}),
 )

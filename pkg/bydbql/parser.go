@@ -49,6 +49,7 @@ func init() {
 			Pattern: fmt.Sprintf(`(?i)(%s)\b`, keywordStr),
 		},
 		{Name: "Ident", Pattern: `[a-zA-Z_][a-zA-Z0-9_-]*`},
+		{Name: "Float", Pattern: `[-+]?\d+\.\d+`},
 		{Name: "Int", Pattern: `[-+]?\d+`},
 		{Name: "String", Pattern: `'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`},
 		{Name: "QuotedIdent", Pattern: `"[a-zA-Z_][a-zA-Z0-9_.]*"|'[a-zA-Z_][a-zA-Z0-9_.]*'`},

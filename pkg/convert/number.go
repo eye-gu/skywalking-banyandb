@@ -136,6 +136,35 @@ func BytesToFloat64(b []byte) float64 {
 	return math.Float64frombits(binary.BigEndian.Uint64(b))
 }
 
+// Float64ToOrderedBytes converts float64 to order-preserving bytes.
+// This encoding ensures that if f1 < f2, then bytes.Compare(Float64ToOrderedBytes(f1), Float64ToOrderedBytes(f2)) < 0.
+func Float64ToOrderedBytes(f float64) []byte {
+	if math.IsNaN(f) {
+		return Uint64ToBytes(^uint64(0))
+	}
+	bits := math.Float64bits(f)
+	if f >= 0 {
+		bits ^= 0x8000000000000000
+	} else {
+		bits = ^bits
+	}
+	return Uint64ToBytes(bits)
+}
+
+// OrderedBytesToFloat64 converts order-preserving bytes back to float64.
+func OrderedBytesToFloat64(b []byte) float64 {
+	bits := BytesToUint64(b)
+	if bits == ^uint64(0) {
+		return math.NaN()
+	}
+	if bits&0x8000000000000000 != 0 {
+		bits ^= 0x8000000000000000
+	} else {
+		bits = ^bits
+	}
+	return math.Float64frombits(bits)
+}
+
 // BytesToBool converts bytes to bool.
 func BytesToBool(b []byte) bool {
 	if len(b) == 0 {

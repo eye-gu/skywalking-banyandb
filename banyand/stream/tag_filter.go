@@ -91,15 +91,17 @@ func releaseDictionaryFilter(df *filter.DictionaryFilter) {
 var dictionaryFilterPool = pool.Register[*filter.DictionaryFilter]("stream-dictionaryFilter")
 
 type tagFilter struct {
-	filter Filter
-	min    []byte
-	max    []byte
+	filter    Filter
+	min       []byte
+	max       []byte
+	valueType pbv1.ValueType
 }
 
 func (tf *tagFilter) reset() {
 	tf.filter = nil
 	tf.min = tf.min[:0]
 	tf.max = tf.max[:0]
+	tf.valueType = 0
 }
 
 func generateTagFilter() *tagFilter {
@@ -145,9 +147,10 @@ func (tff tagFamilyFilter) unmarshal(tagFamilyMetadataBlock *dataBlock, metaRead
 	for _, tm := range tfm.tagMetadata {
 		tf := generateTagFilter()
 		hasMinMax := false
-		if tm.valueType == pbv1.ValueTypeInt64 {
+		if (tm.valueType == pbv1.ValueTypeInt64 || tm.valueType == pbv1.ValueTypeFloat64) && (len(tm.min) > 0 && len(tm.max) > 0) {
 			tf.min = tm.min
 			tf.max = tm.max
+			tf.valueType = tm.valueType
 			hasMinMax = true
 		}
 		if tm.filterBlock.size > 0 {
@@ -236,7 +239,12 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 				if !ok {
 					return false, fmt.Errorf("lower is not a float value: %v", rangeOpts.Lower)
 				}
-				value := convert.Int64ToBytes(numeric.Float64ToInt64(lower.Value))
+				var value []byte
+				if tf.valueType == pbv1.ValueTypeFloat64 {
+					value = convert.Float64ToOrderedBytes(lower.Value)
+				} else {
+					value = convert.Int64ToBytes(numeric.Float64ToInt64(lower.Value))
+				}
 				if bytes.Compare(tf.max, value) == -1 || !rangeOpts.IncludesLower && bytes.Equal(tf.max, value) {
 					return true, nil
 				}
@@ -246,7 +254,12 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 				if !ok {
 					return false, fmt.Errorf("upper is not a float value: %v", rangeOpts.Upper)
 				}
-				value := convert.Int64ToBytes(numeric.Float64ToInt64(upper.Value))
+				var value []byte
+				if tf.valueType == pbv1.ValueTypeFloat64 {
+					value = convert.Float64ToOrderedBytes(upper.Value)
+				} else {
+					value = convert.Int64ToBytes(numeric.Float64ToInt64(upper.Value))
+				}
 				if bytes.Compare(tf.min, value) == 1 || !rangeOpts.IncludesUpper && bytes.Equal(tf.min, value) {
 					return true, nil
 				}

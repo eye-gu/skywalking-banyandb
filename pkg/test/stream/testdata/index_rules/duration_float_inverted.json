@@ -1,0 +1,12 @@
+{
+  "metadata": {
+    "id": 12,
+    "name": "duration_float_inverted",
+    "group": "default"
+  },
+  "tags": [
+    "duration_float_inverted"
+  ],
+  "type": "TYPE_INVERTED",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

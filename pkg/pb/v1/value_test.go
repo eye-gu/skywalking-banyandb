@@ -40,6 +40,10 @@ func TestMarshalAndUnmarshalTagValue(t *testing.T) {
 			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 123}}},
 		},
 		{
+			name: "float value",
+			src:  &modelv1.TagValue{Value: &modelv1.TagValue_Float{Float: &modelv1.Float{Value: 123.456}}},
+		},
+		{
 			name: "binary data",
 			src:  &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: []byte("binaryData")}},
 		},

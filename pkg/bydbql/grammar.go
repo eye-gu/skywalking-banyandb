@@ -248,9 +248,10 @@ type GrammarMatchValues struct {
 
 // GrammarValue represents a value.
 type GrammarValue struct {
-	String  *string `parser:"  @String"`
-	Integer *int64  `parser:"| @Int"`
-	Null    bool    `parser:"| @'NULL'"`
+	String  *string  `parser:"  @String"`
+	Integer *int64   `parser:"| @Int"`
+	Null    bool     `parser:"| @'NULL'"`
+	Float   *float64 `parser:"| @Float"`
 }
 
 // GrammarIdentifierPart Can be either an Ident or a Keyword (keywords are allowed in paths, but not as standalone identifiers).

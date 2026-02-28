@@ -389,6 +389,81 @@ func (s *strArrLiteral) Elements() []string {
 }
 
 var (
+	_ LiteralExpr    = (*float64Literal)(nil)
+	_ ComparableExpr = (*float64Literal)(nil)
+)
+
+type float64Literal struct {
+	float64
+}
+
+func (f *float64Literal) Field(key index.FieldKey) index.Field {
+	return index.NewFloatField(key, f.float64)
+}
+
+func (f *float64Literal) RangeOpts(isUpper bool, includeLower bool, includeUpper bool) index.RangeOpts {
+	if isUpper {
+		return index.NewFloatRangeOpts(-math.MaxFloat64, f.float64, includeLower, includeUpper)
+	}
+	return index.NewFloatRangeOpts(f.float64, math.MaxFloat64, includeLower, includeUpper)
+}
+
+func (f *float64Literal) SubExprs() []LiteralExpr {
+	return []LiteralExpr{f}
+}
+
+func newFloat64Literal(val float64) *float64Literal {
+	return &float64Literal{
+		float64: val,
+	}
+}
+
+func (f *float64Literal) Compare(other LiteralExpr) (int, bool) {
+	if o, ok := other.(*float64Literal); ok {
+		if f.float64 < o.float64 {
+			return -1, true
+		} else if f.float64 > o.float64 {
+			return 1, true
+		}
+		return 0, true
+	}
+	return 0, false
+}
+
+func (f *float64Literal) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*float64Literal); ok {
+		return f.float64 == o.float64
+	}
+	return false
+}
+
+func (f *float64Literal) BelongTo(other LiteralExpr) bool {
+	if o, ok := other.(*float64Literal); ok {
+		return f.float64 == o.float64
+	}
+	return false
+}
+
+func (f *float64Literal) Bytes() [][]byte {
+	return [][]byte{convert.Float64ToBytes(f.float64)}
+}
+
+func (f *float64Literal) Equal(expr Expr) bool {
+	if other, ok := expr.(*float64Literal); ok {
+		return other.float64 == f.float64
+	}
+	return false
+}
+
+func (f *float64Literal) String() string {
+	return strconv.FormatFloat(f.float64, 'f', -1, 64)
+}
+
+func (f *float64Literal) Elements() []string {
+	return []string{strconv.FormatFloat(f.float64, 'f', -1, 64)}
+}
+
+var (
 	_               LiteralExpr    = (*nullLiteral)(nil)
 	_               ComparableExpr = (*nullLiteral)(nil)
 	nullLiteralExpr                = &nullLiteral{}

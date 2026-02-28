@@ -120,16 +120,20 @@ func (b *block) processTags(tf tagValues, tagFamilyIdx, i int, elementsLen int) 
 		} else if t.value != nil {
 			tags[j].uniqueValues[convert.BytesToString(t.value)] = struct{}{}
 		}
-		if t.valueType == pbv1.ValueTypeInt64 {
+		if t.valueType == pbv1.ValueTypeInt64 || t.valueType == pbv1.ValueTypeFloat64 {
+			value := t.value
+			if t.valueType == pbv1.ValueTypeFloat64 {
+				value = convert.Float64ToOrderedBytes(convert.BytesToFloat64(t.value))
+			}
 			if len(tags[j].min) == 0 {
-				tags[j].min = t.value
-			} else if bytes.Compare(t.value, tags[j].min) == -1 {
-				tags[j].min = t.value
+				tags[j].min = value
+			} else if bytes.Compare(value, tags[j].min) == -1 {
+				tags[j].min = value
 			}
 			if len(tags[j].max) == 0 {
-				tags[j].max = t.value
-			} else if bytes.Compare(t.value, tags[j].max) == 1 {
-				tags[j].max = t.value
+				tags[j].max = value
+			} else if bytes.Compare(value, tags[j].max) == 1 {
+				tags[j].max = value
 			}
 		}
 	}

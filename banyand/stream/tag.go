@@ -88,7 +88,7 @@ func (t *tag) mustWriteTo(tm *tagMetadata, tagWriter *writer, tagFilterWriter *w
 	tm.offset = tagWriter.bytesWritten
 	tagWriter.MustWrite(bb.Buf)
 
-	if tm.valueType == pbv1.ValueTypeInt64 && (t.min != nil || t.max != nil) {
+	if (tm.valueType == pbv1.ValueTypeInt64 || tm.valueType == pbv1.ValueTypeFloat64) && (t.min != nil || t.max != nil) {
 		tm.min = t.min
 		tm.max = t.max
 	}

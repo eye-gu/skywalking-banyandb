@@ -47,6 +47,9 @@ func Initialize(addr string, now time.Time) {
 	casesstreamdata.Write(conn, "duplicated", now, 0)
 	casesstreamdata.WriteDeduplicationTest(conn, "deduplication_test", now, time.Millisecond)
 	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
+	casesstreamdata.WriteToGroup(conn, "sw_float", "default", "float_tag_test", now.Add(3*time.Minute), interval)
+	casesstreamdata.WriteToGroup(conn, "sw_float_skipping", "default", "float_tag_test", now.Add(3*time.Minute), interval)
+	casesstreamdata.WriteToGroup(conn, "sw_float_inverted", "default", "float_tag_test", now.Add(3*time.Minute), interval)
 	casesstreamdata.WriteMixed(conn, now.Add(2*time.Minute), interval,
 		casesstreamdata.WriteSpec{
 			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec"},

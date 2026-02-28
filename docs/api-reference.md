@@ -608,6 +608,7 @@ Trace is the top level message of a trace.
 | int_array | [IntArray](#banyandb-model-v1-IntArray) |  |  |
 | binary_data | [bytes](#bytes) |  |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| float | [Float](#banyandb-model-v1-Float) |  |  |
 
 
 
@@ -2720,6 +2721,7 @@ Type determine the index structure under the hood
 | TAG_TYPE_INT_ARRAY | 4 |  |
 | TAG_TYPE_DATA_BINARY | 5 |  |
 | TAG_TYPE_TIMESTAMP | 6 |  |
+| TAG_TYPE_FLOAT | 7 |  |
 
 
  

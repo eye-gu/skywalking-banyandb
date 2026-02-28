@@ -83,6 +83,14 @@ func ParseExprOrEntity(entityDict map[string]int, entity []*modelv1.TagValue, co
 			return nil, entities, nil
 		}
 		return newInt64ArrLiteral(v.IntArray.GetValue()), nil, nil
+	case *modelv1.TagValue_Float:
+		if ok {
+			parsedEntity := make([]*modelv1.TagValue, len(entity))
+			copy(parsedEntity, entity)
+			parsedEntity[entityIdx] = cond.Value
+			return nil, [][]*modelv1.TagValue{parsedEntity}, nil
+		}
+		return newFloat64Literal(v.Float.GetValue()), nil, nil
 	case *modelv1.TagValue_Null:
 		return newNullLiteral(), nil, nil
 	case *modelv1.TagValue_Timestamp:
@@ -108,6 +116,8 @@ func ParseExpr(cond *modelv1.Condition) (LiteralExpr, error) {
 		return newInt64Literal(v.Int.GetValue()), nil
 	case *modelv1.TagValue_IntArray:
 		return newInt64ArrLiteral(v.IntArray.GetValue()), nil
+	case *modelv1.TagValue_Float:
+		return newFloat64Literal(v.Float.GetValue()), nil
 	case *modelv1.TagValue_Null:
 		return newNullLiteral(), nil
 	case *modelv1.TagValue_Timestamp:

@@ -93,6 +93,14 @@ func NewIntField(key FieldKey, value int64) Field {
 	}
 }
 
+// NewFloatField creates a new float field.
+func NewFloatField(key FieldKey, value float64) Field {
+	return Field{
+		term: &FloatTermValue{Value: value},
+		Key:  key,
+	}
+}
+
 // NewBytesField creates a new bytes field.
 func NewBytesField(key FieldKey, value []byte) Field {
 	return Field{
@@ -409,6 +417,16 @@ func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) Rang
 	return RangeOpts{
 		Lower:         &FloatTermValue{Value: numeric.Int64ToFloat64(lower)},
 		Upper:         &FloatTermValue{Value: numeric.Int64ToFloat64(upper)},
+		IncludesLower: includesLower,
+		IncludesUpper: includesUpper,
+	}
+}
+
+// NewFloatRangeOpts creates a new float range option.
+func NewFloatRangeOpts(lower, upper float64, includesLower, includesUpper bool) RangeOpts {
+	return RangeOpts{
+		Lower:         &FloatTermValue{Value: lower},
+		Upper:         &FloatTermValue{Value: upper},
 		IncludesLower: includesLower,
 		IncludesUpper: includesUpper,
 	}

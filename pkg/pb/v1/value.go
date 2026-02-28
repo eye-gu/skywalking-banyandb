@@ -56,6 +56,8 @@ func MustTagValueToValueType(tag *modelv1.TagValue) ValueType {
 		return ValueTypeStr
 	case *modelv1.TagValue_Int:
 		return ValueTypeInt64
+	case *modelv1.TagValue_Float:
+		return ValueTypeFloat64
 	case *modelv1.TagValue_BinaryData:
 		return ValueTypeBinaryData
 	case *modelv1.TagValue_StrArray:
@@ -76,6 +78,8 @@ func MustTagValueSpecToValueType(tag databasev1.TagType) ValueType {
 		return ValueTypeStr
 	case databasev1.TagType_TAG_TYPE_INT:
 		return ValueTypeInt64
+	case databasev1.TagType_TAG_TYPE_FLOAT:
+		return ValueTypeFloat64
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
 		return ValueTypeBinaryData
 	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
@@ -96,6 +100,8 @@ func TagValueSpecToValueType(tag databasev1.TagType) ValueType {
 		return ValueTypeStr
 	case databasev1.TagType_TAG_TYPE_INT:
 		return ValueTypeInt64
+	case databasev1.TagType_TAG_TYPE_FLOAT:
+		return ValueTypeFloat64
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY:
 		return ValueTypeBinaryData
 	case databasev1.TagType_TAG_TYPE_STRING_ARRAY:
@@ -116,6 +122,8 @@ func MustTagValueToStr(tag *modelv1.TagValue) string {
 		return `"` + tag.GetStr().Value + `"`
 	case *modelv1.TagValue_Int:
 		return strconv.FormatInt(tag.GetInt().Value, 10)
+	case *modelv1.TagValue_Float:
+		return strconv.FormatFloat(tag.GetFloat().Value, 'f', -1, 64)
 	case *modelv1.TagValue_BinaryData:
 		return fmt.Sprintf("%x", tag.GetBinaryData())
 	case *modelv1.TagValue_Timestamp:
@@ -161,6 +169,8 @@ func marshalTagValue(dest []byte, tv *modelv1.TagValue) ([]byte, error) {
 		dest = marshalEntityValue(dest, []byte(tv.GetStr().Value))
 	case *modelv1.TagValue_Int:
 		dest = marshalEntityValue(dest, encoding.Int64ToBytes(nil, tv.GetInt().Value))
+	case *modelv1.TagValue_Float:
+		dest = marshalEntityValue(dest, convert.Float64ToBytes(tv.GetFloat().Value))
 	case *modelv1.TagValue_BinaryData:
 		dest = marshalEntityValue(dest, tv.GetBinaryData())
 	case *modelv1.TagValue_Timestamp:
@@ -215,6 +225,17 @@ func unmarshalTagValue(dest []byte, src []byte) ([]byte, []byte, *modelv1.TagVal
 			Value: &modelv1.TagValue_Int{
 				Int: &modelv1.Int{
 					Value: encoding.BytesToInt64(dest),
+				},
+			},
+		}, nil
+	case ValueTypeFloat64:
+		if dest, src, err = unmarshalEntityValue(dest, src[1:]); err != nil {
+			return nil, nil, nil, errors.WithMessage(err, "unmarshal float tag value")
+		}
+		return dest, src, &modelv1.TagValue{
+			Value: &modelv1.TagValue_Float{
+				Float: &modelv1.Float{
+					Value: convert.BytesToFloat64(dest),
 				},
 			},
 		}, nil
@@ -337,6 +358,15 @@ func MustCompareTagValue(tv1, tv2 *modelv1.TagValue) int {
 		return bytes.Compare(convert.StringToBytes(tv1.GetStr().Value), convert.StringToBytes(tv2.GetStr().Value))
 	case ValueTypeInt64:
 		return int(tv1.GetInt().Value - tv2.GetInt().Value)
+	case ValueTypeFloat64:
+		v1 := tv1.GetFloat().Value
+		v2 := tv2.GetFloat().Value
+		if v1 < v2 {
+			return -1
+		} else if v1 > v2 {
+			return 1
+		}
+		return 0
 	case ValueTypeBinaryData:
 		return bytes.Compare(tv1.GetBinaryData(), tv2.GetBinaryData())
 	case ValueTypeTimestamp:

@@ -420,6 +420,11 @@ func encodeTagValue(name string, tagType databasev1.TagType, tagVal *modelv1.Tag
 		for i := range tagVal.GetStrArray().Value {
 			tv.valueArr[i] = []byte(tagVal.GetStrArray().Value[i])
 		}
+	case databasev1.TagType_TAG_TYPE_FLOAT:
+		tv.valueType = pbv1.ValueTypeFloat64
+		if tagVal.GetFloat() != nil {
+			tv.value = convert.Float64ToBytes(tagVal.GetFloat().GetValue())
+		}
 	default:
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}
@@ -470,6 +475,14 @@ func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1
 			f.NoSort = noSort
 			dest = append(dest, f)
 		}
+	case databasev1.TagType_TAG_TYPE_FLOAT:
+		v := tagVal.GetFloat()
+		if v == nil {
+			return dest
+		}
+		f := index.NewFloatField(fieldKey, v.Value)
+		f.NoSort = noSort
+		dest = append(dest, f)
 	default:
 		logger.Panicf("unsupported tag value type: %T", tagVal.GetValue())
 	}

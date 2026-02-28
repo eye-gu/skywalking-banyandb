@@ -1142,6 +1142,17 @@ func (t *Transformer) setGrammarConditionValue(cond *modelv1.Condition, val *Gra
 			},
 		}
 
+	case databasev1.TagType_TAG_TYPE_FLOAT:
+		floatVal, err := t.grammarValueToFloat64(val)
+		if err != nil {
+			return err
+		}
+		cond.Value = &modelv1.TagValue{
+			Value: &modelv1.TagValue_Float{
+				Float: &modelv1.Float{Value: floatVal},
+			},
+		}
+
 	case databasev1.TagType_TAG_TYPE_DATA_BINARY, databasev1.TagType_TAG_TYPE_TIMESTAMP:
 		return fmt.Errorf("tag type %v (binary/timestamp) is not supported in condition values", tagSpec.tag.Type)
 
@@ -1585,6 +1596,23 @@ func (t *Transformer) grammarValueToInt64(val *GrammarValue) (int64, error) {
 		return intVal, nil
 	}
 	return 0, fmt.Errorf("cannot convert value to int64")
+}
+
+func (t *Transformer) grammarValueToFloat64(val *GrammarValue) (float64, error) {
+	if val.Float != nil {
+		return *val.Float, nil
+	}
+	if val.Integer != nil {
+		return float64(*val.Integer), nil
+	}
+	if val.String != nil {
+		floatVal, err := strconv.ParseFloat(*val.String, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse string '%s' as float: %w", *val.String, err)
+		}
+		return floatVal, nil
+	}
+	return 0, fmt.Errorf("cannot convert value to float64")
 }
 
 // extractIDsAndCriteria separates ID conditions from other conditions in property queries.

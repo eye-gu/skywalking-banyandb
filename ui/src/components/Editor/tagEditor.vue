@@ -78,6 +78,10 @@
       value: 'TAG_TYPE_DATA_BINARY',
       label: 'DATA_BINARY',
     },
+    {
+      value: 'TAG_TYPE_FLOAT',
+      label: 'FLOAT',
+    },
   ];
   const validateTag = (rule: any, value: any, callback: any) => {
     if (value === '') {

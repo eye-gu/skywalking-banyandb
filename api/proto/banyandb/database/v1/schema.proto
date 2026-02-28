@@ -36,6 +36,7 @@ enum TagType {
   TAG_TYPE_INT_ARRAY = 4;
   TAG_TYPE_DATA_BINARY = 5;
   TAG_TYPE_TIMESTAMP = 6;
+  TAG_TYPE_FLOAT = 7;
 }
 
 message TagFamilySpec {

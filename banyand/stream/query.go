@@ -384,6 +384,8 @@ func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValu
 	switch valueType {
 	case pbv1.ValueTypeInt64:
 		return int64TagValue(convert.BytesToInt64(value))
+	case pbv1.ValueTypeFloat64:
+		return float64TagValue(convert.BytesToFloat64(value))
 	case pbv1.ValueTypeStr:
 		return strTagValue(string(value))
 	case pbv1.ValueTypeBinaryData:
@@ -417,6 +419,16 @@ func int64TagValue(value int64) *modelv1.TagValue {
 	return &modelv1.TagValue{
 		Value: &modelv1.TagValue_Int{
 			Int: &modelv1.Int{
+				Value: value,
+			},
+		},
+	}
+}
+
+func float64TagValue(value float64) *modelv1.TagValue {
+	return &modelv1.TagValue{
+		Value: &modelv1.TagValue_Float{
+			Float: &modelv1.Float{
 				Value: value,
 			},
 		},

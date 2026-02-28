@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "sw-float-skipping-binding",
+    "group": "default"
+  },
+  "rules": [
+    "duration_float_skipping"
+  ],
+  "subject":{
+    "catalog": "CATALOG_STREAM",
+    "name": "sw_float_skipping"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

@@ -222,6 +222,10 @@ func parseExpr(value *modelv1.TagValue, analyzer *analysis.Analyzer) (Comparable
 		return &int64ArrLiteral{
 			arr: v.IntArray.GetValue(),
 		}, nil
+	case *modelv1.TagValue_Float:
+		return &float64Literal{
+			float64: v.Float.GetValue(),
+		}, nil
 	case *modelv1.TagValue_Null:
 		return nullLiteralExpr, nil
 	}

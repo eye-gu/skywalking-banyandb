@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-SHOW TOP 3
+SHOW TOP 2
 FROM MEASURE topn_agg_test IN sw_metric
 TIME > '-15m'
 AGGREGATE BY MEAN

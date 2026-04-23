@@ -60,27 +60,29 @@ type ConnectionHandler[C Client] interface {
 
 // ConnManagerConfig holds configuration for ConnManager.
 type ConnManagerConfig[C Client] struct {
-	Handler            ConnectionHandler[C]
-	Logger             *logger.Logger
-	RetryPolicy        string
-	ExtraDialOpts      []grpc.DialOption
-	MaxRecvMsgSize     int
-	HealthCheckTimeout time.Duration
+	Handler             ConnectionHandler[C]
+	Logger              *logger.Logger
+	RetryPolicy         string
+	ExtraDialOpts       []grpc.DialOption
+	HealthCheckTimeout  time.Duration
+	HealthCheckInterval time.Duration
+	MaxRecvMsgSize      int
 }
 
 // ConnManager manages gRPC connections with health checking, circuit breaking, and eviction.
 type ConnManager[C Client] struct {
-	handler            ConnectionHandler[C]
-	log                *logger.Logger
-	registered         map[string]*databasev1.Node
-	active             map[string]*managedNode[C]
-	evictable          map[string]evictNode
-	cbStates           map[string]*circuitState
-	closer             *run.Closer
-	dialOpts           []grpc.DialOption
-	healthCheckTimeout time.Duration
-	mu                 sync.RWMutex
-	cbMu               sync.RWMutex
+	handler             ConnectionHandler[C]
+	log                 *logger.Logger
+	registered          map[string]*databasev1.Node
+	active              map[string]*managedNode[C]
+	evictable           map[string]evictNode
+	cbStates            map[string]*circuitState
+	closer              *run.Closer
+	dialOpts            []grpc.DialOption
+	healthCheckTimeout  time.Duration
+	healthCheckInterval time.Duration
+	mu                  sync.RWMutex
+	cbMu                sync.RWMutex
 }
 
 type managedNode[C Client] struct {
@@ -109,15 +111,19 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 		healthCheckTimeout = 2 * time.Second
 	}
 	m := &ConnManager[C]{
-		handler:            cfg.Handler,
-		log:                cfg.Logger,
-		registered:         make(map[string]*databasev1.Node),
-		active:             make(map[string]*managedNode[C]),
-		evictable:          make(map[string]evictNode),
-		cbStates:           make(map[string]*circuitState),
-		closer:             run.NewCloser(1),
-		dialOpts:           dialOpts,
-		healthCheckTimeout: healthCheckTimeout,
+		handler:             cfg.Handler,
+		log:                 cfg.Logger,
+		registered:          make(map[string]*databasev1.Node),
+		active:              make(map[string]*managedNode[C]),
+		evictable:           make(map[string]evictNode),
+		cbStates:            make(map[string]*circuitState),
+		closer:              run.NewCloser(1),
+		dialOpts:            dialOpts,
+		healthCheckTimeout:  healthCheckTimeout,
+		healthCheckInterval: cfg.HealthCheckInterval,
+	}
+	if m.healthCheckInterval > 0 && m.closer.AddRunning() {
+		go m.periodicHealthCheck()
 	}
 	return m
 }
@@ -339,10 +345,11 @@ func (m *ConnManager[C]) FailoverNode(node string) {
 		}
 		return
 	}
-	if mn, ok := m.active[node]; ok && !m.checkHealthAndReconnect(mn.conn, mn.node, mn.client) {
-		_ = mn.conn.Close()
-		delete(m.active, node)
-		m.handler.OnInactive(node, mn.client)
+	mn, ok := m.active[node]
+	if !ok {
+		return
+	}
+	if !m.checkHealthAndReconnect(mn.conn, mn.node, mn.client) {
 		m.log.Info().Str("status", m.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
 	}
 }
@@ -417,6 +424,7 @@ func (m *ConnManager[C]) removeNodeIfUnhealthy(name string, mn *managedNode[C]) 
 	if m.healthCheck(mn.node.String(), mn.conn) {
 		return false
 	}
+	m.log.Info().Str("node", name).Msg("removeNodeIfUnhealthy: node is unhealthy, removing from active")
 	_ = mn.conn.Close()
 	delete(m.active, name)
 	m.handler.OnInactive(name, mn.client)
@@ -424,12 +432,13 @@ func (m *ConnManager[C]) removeNodeIfUnhealthy(name string, mn *managedNode[C]) 
 }
 
 // checkHealthAndReconnect checks if a node is healthy. If not, closes the conn,
-// adds to evictable, calls OnInactive, and starts a retry goroutine.
+// adds to evictable, deletes from active, calls OnInactive, and starts a retry goroutine.
 // Returns true if healthy.
 func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *databasev1.Node, client C) bool {
 	if m.healthCheck(node.String(), conn) {
 		return true
 	}
+	m.log.Info().Str("node", node.Metadata.Name).Msg("checkHealthAndReconnect: node is unhealthy, moving to evictable")
 	_ = conn.Close()
 	if !m.closer.AddRunning() {
 		return false
@@ -496,7 +505,24 @@ func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *da
 			attempt++
 		}
 	}(name, m.evictable[name])
+	delete(m.active, name)
 	return false
+}
+
+func (m *ConnManager[C]) periodicHealthCheck() {
+	defer m.closer.Done()
+	ticker := time.NewTicker(m.healthCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			for _, name := range m.ActiveNames() {
+				m.FailoverNode(name)
+			}
+		case <-m.closer.CloseNotify():
+			return
+		}
+	}
 }
 
 func (m *ConnManager[C]) healthCheck(node string, conn *grpc.ClientConn) bool {
@@ -508,12 +534,14 @@ func (m *ConnManager[C]) healthCheck(node string, conn *grpc.ClientConn) bool {
 			})
 		return err
 	}); requestErr != nil {
-		if e := m.log.Debug(); e.Enabled() {
-			e.Err(requestErr).Str("node", node).Msg("service unhealthy")
-		}
+		m.log.Info().Err(requestErr).Str("node", node).Msg("healthCheck: service unhealthy, RPC error")
 		return false
 	}
-	return resp.GetStatus() == grpc_health_v1.HealthCheckResponse_SERVING
+	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		m.log.Info().Str("node", node).Str("status", resp.GetStatus().String()).Msg("healthCheck: service not SERVING")
+		return false
+	}
+	return true
 }
 
 func (m *ConnManager[C]) dump() string {

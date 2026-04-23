@@ -16,17 +16,17 @@
 debuggingtrace: null
 type: TIME_SERIES_VALUES
 results:
-  {{- contains .results }}
+  {{- contains (.results | noDuplicates) }}
   - metric:
       labels:
         {{- contains .metric.labels }}
         - key: p
-          value: {{ .value }}
+          value: {{ notEmpty .value }}
         {{- end}}
     values:
       {{- contains .values }}
       - id: {{ notEmpty .id }}
-        value: {{ .value }}
+        value: {{ notEmpty .value }}
         owner: null
         traceid: null
       - id: {{ notEmpty .id }}

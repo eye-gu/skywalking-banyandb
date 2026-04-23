@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
 
@@ -40,76 +42,234 @@ var (
 	mergeTypeFile = "file"
 )
 
+var (
+	mergeLaneFast = "fast"
+	mergeLaneSlow = "slow"
+)
+
+const defaultSmallMergeThreshold = 32 << 20 // 32MB fallback
+
+func computeSmallMergeThreshold() uint64 {
+	memLimit, err := cgroups.MemoryLimit()
+	if err != nil || memLimit <= 0 {
+		return defaultSmallMergeThreshold
+	}
+	threshold := uint64(memLimit) / 16
+	if threshold < defaultSmallMergeThreshold {
+		return defaultSmallMergeThreshold
+	}
+	return threshold
+}
+
+type mergeDispatchRequest struct {
+	enqueuedAt time.Time
+	toBeMerged map[uint64]struct{}
+	typ        string
+	lane       string
+	parts      []*partWrapper
+}
+
 func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()
 
-	var epoch uint64
+	var lastProcessedEpoch uint64
 
 	ew := flusherNotifier.Add(0, tst.loopCloser.CloseNotify())
 	if ew == nil {
 		return
 	}
 
-	var pwsChunk []*partWrapper
+	threshold := computeSmallMergeThreshold()
+	fastWorkers := max(1, cgroups.CPUs()/2)
+	fastCh := make(chan *mergeDispatchRequest, fastWorkers)
+	slowCh := make(chan *mergeDispatchRequest, 1)
+	triggerCh := make(chan struct{}, 1)
+
+	var workersWg, dispatcherWg sync.WaitGroup
+
+	for i := 0; i < fastWorkers; i++ {
+		workersWg.Add(1)
+		go func() {
+			defer workersWg.Done()
+			tst.mergeLaneWorker(fastCh, merges)
+		}()
+	}
+	workersWg.Add(1)
+	go func() {
+		defer workersWg.Done()
+		tst.mergeLaneWorker(slowCh, merges)
+	}()
+
+	dispatcherWg.Add(1)
+	go func() {
+		defer dispatcherWg.Done()
+		tst.dispatcherLoop(triggerCh, threshold, fastCh, slowCh)
+	}()
+
+	// Shutdown order: stop dispatcher first so no new work enters the lane
+	// channels, then close the lane channels so idle workers exit their range
+	// loops, then wait for workers to drain any in-flight merges.
+	defer func() {
+		close(triggerCh)
+		dispatcherWg.Wait()
+		close(fastCh)
+		close(slowCh)
+		workersWg.Wait()
+	}()
 
 	for {
 		select {
 		case <-tst.loopCloser.CloseNotify():
 			return
 		case <-ew.Watch():
-			if func() bool {
-				curSnapshot := tst.currentSnapshot()
-				if curSnapshot == nil {
-					return false
-				}
-				defer curSnapshot.decRef()
-				if curSnapshot.epoch != epoch {
+			if curSnapshot := tst.currentSnapshot(); curSnapshot != nil {
+				if curSnapshot.epoch > lastProcessedEpoch {
 					select {
-					case mergeMaxConcurrencyCh <- struct{}{}:
-						defer func() {
-							<-mergeMaxConcurrencyCh
-						}()
-					case <-tst.loopCloser.CloseNotify():
-						return true
+					case triggerCh <- struct{}{}:
+					default:
 					}
-					tst.incTotalMergeLoopStarted(1)
-					defer tst.incTotalMergeLoopFinished(1)
-					var err error
-					if pwsChunk, err = tst.mergeSnapshot(curSnapshot, merges, pwsChunk[:0]); err != nil {
-						if errors.Is(err, errClosed) {
-							return true
-						}
-						tst.l.Logger.Warn().Err(err).Msgf("cannot merge snapshot: %d", curSnapshot.epoch)
-						tst.incTotalMergeLoopErr(1)
-						return false
-					}
-					epoch = curSnapshot.epoch
+					lastProcessedEpoch = curSnapshot.epoch
 				}
-				ew = flusherNotifier.Add(epoch, tst.loopCloser.CloseNotify())
-				return ew == nil
-			}() {
+				curSnapshot.decRef()
+			}
+			ew = flusherNotifier.Add(lastProcessedEpoch, tst.loopCloser.CloseNotify())
+			if ew == nil {
 				return
 			}
 		}
 	}
 }
 
-func (tst *tsTable) mergeSnapshot(curSnapshot *snapshot, merges chan *mergerIntroduction, dst []*partWrapper) ([]*partWrapper, error) {
-	freeDiskSize := tst.freeDiskSpace(tst.root)
-	var toBeMerged map[uint64]struct{}
-	dst, toBeMerged = tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
-	if len(dst) < 2 {
-		return nil, nil
+func (tst *tsTable) dispatcherLoop(triggerCh chan struct{}, threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) {
+	for {
+		select {
+		case <-tst.loopCloser.CloseNotify():
+			return
+		case _, ok := <-triggerCh:
+			if !ok {
+				return
+			}
+			if tst.dispatchAllMerges(threshold, fastCh, slowCh) {
+				return
+			}
+		}
 	}
-	if _, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, dst,
-		toBeMerged, merges, tst.loopCloser.CloseNotify(), mergeTypeFile); err != nil {
-		return dst, err
+}
+
+func (tst *tsTable) dispatchAllMerges(threshold uint64, fastCh, slowCh chan *mergeDispatchRequest) bool {
+	for {
+		curSnapshot := tst.currentSnapshot()
+		if curSnapshot == nil {
+			return false
+		}
+		freeDiskSize := tst.freeDiskSpace(tst.root)
+		var dst []*partWrapper
+		dst, toBeMerged := tst.getPartsToMerge(curSnapshot, freeDiskSize, dst)
+		if len(dst) < 2 {
+			curSnapshot.decRef()
+			return false
+		}
+		for _, pw := range dst {
+			pw.incRef()
+		}
+		curSnapshot.decRef()
+
+		tst.inFlightMu.Lock()
+		if tst.inFlight == nil {
+			tst.inFlight = make(map[uint64]struct{})
+		}
+		for _, pw := range dst {
+			tst.inFlight[pw.ID()] = struct{}{}
+		}
+		tst.inFlightMu.Unlock()
+
+		var totalSize uint64
+		for _, pw := range dst {
+			totalSize += pw.p.partMetadata.CompressedSizeBytes
+		}
+
+		lane := mergeLaneSlow
+		targetCh := slowCh
+		if totalSize < threshold {
+			lane = mergeLaneFast
+			targetCh = fastCh
+		}
+
+		req := &mergeDispatchRequest{
+			parts:      dst,
+			toBeMerged: toBeMerged,
+			typ:        mergeTypeFile,
+			lane:       lane,
+			enqueuedAt: time.Now(),
+		}
+
+		tst.l.Info().
+			Str("lane", lane).
+			Uint64("totalSize", totalSize).
+			Uint64("threshold", threshold).
+			Int("partCount", len(dst)).
+			Msg("dispatching merge")
+
+		select {
+		case targetCh <- req:
+		case <-tst.loopCloser.CloseNotify():
+			tst.releaseDispatchRequest(req)
+			return true
+		}
 	}
-	return dst, nil
+}
+
+func (tst *tsTable) mergeLaneWorker(ch chan *mergeDispatchRequest, merges chan *mergerIntroduction) {
+	for req := range ch {
+		if !req.enqueuedAt.IsZero() {
+			tst.incTotalMergeQueueLatency(time.Since(req.enqueuedAt).Seconds(), req.typ, req.lane)
+		}
+		select {
+		case mergeMaxConcurrencyCh <- struct{}{}:
+		case <-tst.loopCloser.CloseNotify():
+			tst.releaseDispatchRequest(req)
+			// Drain remaining buffered requests so their inFlight entries and
+			// part references are released. The lane channel is closed by the
+			// mergeLoop shutdown defer after the dispatcher exits, which lets
+			// this range loop terminate.
+			for pending := range ch {
+				tst.releaseDispatchRequest(pending)
+			}
+			return
+		}
+
+		tst.incTotalMergeLoopStarted(1)
+		_, mergeErr := tst.mergePartsThenSendIntroduction(
+			snapshotCreatorMerger, req.parts, req.toBeMerged, merges,
+			tst.loopCloser.CloseNotify(), req.typ, req.lane,
+		)
+		tst.incTotalMergeLoopFinished(1)
+		<-mergeMaxConcurrencyCh
+
+		tst.releaseDispatchRequest(req)
+
+		if mergeErr != nil {
+			if !errors.Is(mergeErr, errClosed) {
+				tst.l.Logger.Warn().Err(mergeErr).Str("typ", req.typ).Str("lane", req.lane).Msg("merge lane worker error")
+				tst.incTotalMergeLoopErr(1)
+			}
+		}
+	}
+}
+
+func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
+	tst.inFlightMu.Lock()
+	for _, pw := range req.parts {
+		delete(tst.inFlight, pw.ID())
+	}
+	tst.inFlightMu.Unlock()
+	for _, pw := range req.parts {
+		pw.decRef()
+	}
 }
 
 func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, parts []*partWrapper, merged map[uint64]struct{}, merges chan *mergerIntroduction,
-	closeCh <-chan struct{}, typ string,
+	closeCh <-chan struct{}, typ string, lane string,
 ) (*partWrapper, error) {
 	reservedSpace := tst.reserveSpace(parts)
 	defer releaseDiskSpace(reservedSpace)
@@ -120,9 +280,9 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		return nil, err
 	}
 	elapsed := time.Since(start)
-	tst.incTotalMergeLatency(elapsed.Seconds(), typ)
-	tst.incTotalMerged(1, typ)
-	tst.incTotalMergedParts(len(parts), typ)
+	tst.incTotalMergeLatency(elapsed.Seconds(), typ, lane)
+	tst.incTotalMerged(1, typ, lane)
+	tst.incTotalMergedParts(len(parts), typ, lane)
 	if elapsed > 30*time.Second {
 		var totalCount uint64
 		for _, pw := range parts {
@@ -182,9 +342,10 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 		}
 		mergerIntroductionMap[sidxName] = mergerIntroduction
 		elapsed = time.Since(start)
-		tst.incTotalMergeLatency(elapsed.Seconds(), fmt.Sprintf("%s_%s", typ, sidxName))
-		tst.incTotalMerged(1, fmt.Sprintf("%s_%s", typ, sidxName))
-		tst.incTotalMergedParts(len(parts), fmt.Sprintf("%s_%s", typ, sidxName))
+		sidxTyp := fmt.Sprintf("%s_%s", typ, sidxName)
+		tst.incTotalMergeLatency(elapsed.Seconds(), sidxTyp, lane)
+		tst.incTotalMerged(1, sidxTyp, lane)
+		tst.incTotalMergedParts(len(parts), sidxTyp, lane)
 		if elapsed > 30*time.Second {
 			tst.l.Warn().Int("mergedPartsCount", len(parts)).Str("sidxName", sidxName).Dur("elapsed", elapsed).Msg("sidx merge parts took too long")
 		}
@@ -249,12 +410,17 @@ var reservedDiskSpace uint64
 func (tst *tsTable) getPartsToMerge(snapshot *snapshot, freeDiskSize uint64, dst []*partWrapper) ([]*partWrapper, map[uint64]struct{}) {
 	var parts []*partWrapper
 
+	tst.inFlightMu.RLock()
 	for _, pw := range snapshot.parts {
 		if pw.mp != nil || pw.p.partMetadata.TotalCount < 1 {
 			continue
 		}
+		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
+			continue
+		}
 		parts = append(parts, pw)
 	}
+	tst.inFlightMu.RUnlock()
 
 	dst = tst.option.mergePolicy.getPartsToMerge(dst, parts, freeDiskSize)
 	if len(dst) == 0 {
@@ -324,6 +490,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br.init(pii)
 	bw := generateBlockWriter()
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache, int(traceSize))
+	conflictTags := collectConflictTags(parts)
 
 	var minTimestamp, maxTimestamp int64
 	for i, pw := range parts {
@@ -341,7 +508,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 		}
 	}
 
-	pm, tf, tt, err := mergeBlocks(closeCh, bw, br)
+	pm, tf, tt, err := mergeBlocks(closeCh, bw, br, conflictTags)
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -366,7 +533,30 @@ var errClosed = fmt.Errorf("the merger is closed")
 // forceSlowMerge is used for testing to disable the fast raw merge path.
 var forceSlowMerge = false
 
-func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*partMetadata, *traceIDFilter, *tagType, error) {
+func collectConflictTags(parts []*partWrapper) map[string]struct{} {
+	tagTypes := make(map[string]map[pbv1.ValueType]struct{})
+	for _, pw := range parts {
+		for tag, vt := range pw.p.tagType {
+			t := decodeTypedTag(tag)
+			if tagTypes[t] == nil {
+				tagTypes[t] = make(map[pbv1.ValueType]struct{})
+			}
+			tagTypes[t][vt] = struct{}{}
+		}
+	}
+	var result map[string]struct{}
+	for tag, types := range tagTypes {
+		if len(types) > 1 {
+			if result == nil {
+				result = make(map[string]struct{})
+			}
+			result[tag] = struct{}{}
+		}
+	}
+	return result
+}
+
+func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{}) (*partMetadata, *traceIDFilter, *tagType, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -385,6 +575,14 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			decoder = nil
 		}
 	}
+	loadAndRename := func() {
+		br.loadBlockData(getDecoder())
+		renameConflictTags(&br.block.block, conflictTags)
+	}
+	readAndRename := func(bm *blockMetadata) {
+		br.mustReadRaw(&rawBlk, bm)
+		renameRawConflictTags(&rawBlk, conflictTags)
+	}
 	for br.nextBlockMetadata() {
 		select {
 		case <-closeCh:
@@ -397,13 +595,13 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		nextB := br.peek()
 		if !forceSlowMerge && pendingBlockIsEmpty && (nextB == nil || nextB.bm.traceID != b.bm.traceID) {
 			// fast path: only a single block for the trace id and no pending data
-			br.mustReadRaw(&rawBlk, &b.bm)
+			readAndRename(&b.bm)
 			bw.mustWriteRawBlock(&rawBlk)
 			continue
 		}
 
 		if pendingBlockIsEmpty {
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -418,12 +616,12 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 			nextB = br.peek()
 			if !forceSlowMerge && (nextB == nil || nextB.bm.traceID != b.bm.traceID) {
 				// fast path: only a single block for this new trace id
-				br.mustReadRaw(&rawBlk, &b.bm)
+				readAndRename(&b.bm)
 				bw.mustWriteRawBlock(&rawBlk)
 				continue
 			}
 			// Slow path: start accumulating the new block
-			br.loadBlockData(getDecoder())
+			loadAndRename()
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -435,7 +633,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.traceID = b.bm.traceID
-		br.loadBlockData(getDecoder())
+		loadAndRename()
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
 		if tmpBlock.block.spanSize() <= maxUncompressedSpanSize {
 			if len(tmpBlock.spans) == 0 {
@@ -467,4 +665,41 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader) (*pa
 func mergeTwoBlocks(target, left, right *blockPointer) {
 	target.appendAll(left)
 	target.appendAll(right)
+}
+
+func renameConflictTags(b *block, conflictTags map[string]struct{}) {
+	if len(conflictTags) == 0 {
+		return
+	}
+	for i := range b.tags {
+		if _, ok := conflictTags[b.tags[i].name]; ok {
+			b.tags[i].name = encodeTypedTag(b.tags[i].name, b.tags[i].valueType)
+		}
+	}
+}
+
+func renameRawConflictTags(r *rawBlock, conflictTags map[string]struct{}) {
+	if len(conflictTags) == 0 {
+		return
+	}
+	bm := r.bm
+	for tag := range conflictTags {
+		if _, ok := bm.tags[tag]; !ok {
+			continue
+		}
+		valueType := bm.tagType[tag]
+		typedTag := encodeTypedTag(tag, valueType)
+		bm.tags[typedTag] = bm.tags[tag]
+		delete(bm.tags, tag)
+		bm.tagType[typedTag] = valueType
+		delete(bm.tagType, tag)
+		if rawData, ok := r.tags[tag]; ok {
+			r.tags[typedTag] = rawData
+			delete(r.tags, tag)
+		}
+		if rawMeta, ok := r.tagMetadata[tag]; ok {
+			r.tagMetadata[typedTag] = rawMeta
+			delete(r.tagMetadata, tag)
+		}
+	}
 }

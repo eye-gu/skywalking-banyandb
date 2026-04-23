@@ -48,7 +48,7 @@ jobs:
           tag: ${{ github.sha }}
 
   StoragePlugins:
-    name: Storage E2E
+    name: ${{ matrix.test.name }}
     runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
     timeout-minutes: 90
     needs: [DockerImage]
@@ -56,23 +56,17 @@ jobs:
       fail-fast: false
       matrix:
         test:
-          - name: BanyanDB Etcd
-            config: test/e2e-v2/cases/storage/banyandb/e2e-etcd.yaml
-          - name: BanyanDB Property
-            config: test/e2e-v2/cases/storage/banyandb/e2e-property.yaml
-          - name: Trace Profiling BanyanDB Etcd
-            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-etcd.yaml
-          - name: Trace Profiling BanyanDB Property
-            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e-property.yaml
-          - name: Event BanyanDB Etcd
-            config: test/e2e-v2/cases/event/banyandb/e2e-etcd.yaml
-          - name: Event BanyanDB Property
-            config: test/e2e-v2/cases/event/banyandb/e2e-property.yaml
-          - name: BanyanDB Cluster Mode Etcd
-            config: test/e2e-v2/cases/cluster/e2e-etcd.yaml
-          - name: BanyanDB Cluster Mode Property
-            config: test/e2e-v2/cases/cluster/e2e-property.yaml
-          - name: Rover Istio BanyanDB
+          - name: Storage
+            config: test/e2e-v2/cases/storage/banyandb/e2e.yaml
+          - name: Trace Profiling
+            config: test/e2e-v2/cases/profiling/trace/banyandb/e2e.yaml
+          - name: Event
+            config: test/e2e-v2/cases/event/banyandb/e2e.yaml
+          - name: Log
+            config: test/e2e-v2/cases/log/banyandb/e2e.yaml
+          - name: Cluster
+            config: test/e2e-v2/cases/cluster/e2e.yaml
+          - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             env: |
               ISTIO_VERSION=1.28.0
@@ -117,7 +111,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@8c21e43e241a32a54bdf8eeceb9099eb27e5e9b4
+        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions

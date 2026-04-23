@@ -36,10 +36,13 @@ var (
 		gm.Eventually(func(innerGm gm.Gomega) {
 			topNTestData.VerifyFn(innerGm, SharedContext, args)
 		}, flags.EventuallyTimeout).WithTimeout(10 * time.Second).WithPolling(2 * time.Second).Should(gm.Succeed())
+		gm.Consistently(func(innerGm gm.Gomega) {
+			topNTestData.VerifyFn(innerGm, SharedContext, args)
+		}, flags.ConsistentlyTimeout).Should(gm.Succeed())
 	}
 )
 
-var _ = g.DescribeTable("TopN Tests", verify,
+var topnEntries = []any{
 	g.Entry("max top3 order by desc", helpers.Args{Input: "aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 with condition order by desc", helpers.Args{Input: "condition_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("max top3 for null group order by desc", helpers.Args{Input: "null_group", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),

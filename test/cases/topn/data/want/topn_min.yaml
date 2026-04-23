@@ -21,10 +21,10 @@ lists:
     - key: service_id
       value:
         str:
-          value: svc_3
+          value: svc_2
     value:
       int:
-        value: "180"
+        value: "50"
   - entity:
     - key: service_id
       value:
@@ -37,7 +37,7 @@ lists:
     - key: service_id
       value:
         str:
-          value: svc_2
+          value: svc_3
     value:
       int:
-        value: "50"
+        value: "180"

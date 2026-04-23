@@ -17,6 +17,6 @@
 
 name: "topn_agg_test"
 groups: ["sw_metric"]
-topN: 3
+topN: 2
 fieldValueSort: 1
 agg: 1

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 const (
@@ -296,6 +298,20 @@ func (s *sidx) PrepareMemPart(partID uint64, mp *MemPart) func(cur *Snapshot) *S
 	}
 }
 
+// PrepareFilePart prepares a transition for introducing a file-backed part.
+func (s *sidx) PrepareFilePart(partID uint64, partPath string) func(cur *Snapshot) *Snapshot {
+	return func(cur *Snapshot) *Snapshot {
+		if cur == nil {
+			cur = &Snapshot{}
+		}
+		next := cur.copyAllTo()
+		part := mustOpenPart(partID, partPath, s.fileSystem)
+		pw := newPartWrapper(nil, part)
+		next.parts = append(next.parts, pw)
+		return next
+	}
+}
+
 // PrepareFlushed prepares a transition for introducing flushed parts.
 func (s *sidx) PrepareFlushed(intro *FlusherIntroduction) func(cur *Snapshot) *Snapshot {
 	return func(cur *Snapshot) *Snapshot {
@@ -358,6 +374,7 @@ func (b *blockCursorBuilder) processWithFilter(req QueryRequest, log *logger.Log
 
 	tags := make([]*modelv1.Tag, 0, len(b.block.tags))
 	decoder := req.TagFilter.GetDecoder()
+	orderedTagNames := b.orderedTagNamesForFilter(req.TagProjection)
 
 	for i := 0; i < len(b.block.userKeys); i++ {
 		dataBytes := b.block.data[i]
@@ -366,7 +383,7 @@ func (b *blockCursorBuilder) processWithFilter(req QueryRequest, log *logger.Log
 			continue
 		}
 
-		tags = b.collectTagsForFilter(tags, decoder, i)
+		tags = b.collectTagsForFilter(tags, decoder, i, orderedTagNames)
 
 		matched, err := req.TagFilter.Match(tags)
 		if err != nil {
@@ -395,24 +412,63 @@ func (b *blockCursorBuilder) processWithoutFilter() {
 	}
 }
 
-func (b *blockCursorBuilder) collectTagsForFilter(buf []*modelv1.Tag, decoder func(pbv1.ValueType, []byte, [][]byte) *modelv1.TagValue, index int) []*modelv1.Tag {
+func (b *blockCursorBuilder) collectTagsForFilter(
+	buf []*modelv1.Tag,
+	decoder func(pbv1.ValueType, []byte, [][]byte) *modelv1.TagValue,
+	index int,
+	tagNames []string,
+) []*modelv1.Tag {
 	buf = buf[:0]
-
-	for tagName, tagData := range b.block.tags {
+	for _, tagName := range tagNames {
+		tagData, ok := b.block.tags[tagName]
+		if !ok {
+			continue
+		}
 		if index >= len(tagData.values) {
 			continue
 		}
 
 		row := &tagData.values[index]
 		tagValue := decoder(tagData.valueType, row.value, row.valueArr)
-		if tagValue != nil {
-			buf = append(buf, &modelv1.Tag{
-				Key:   tagName,
-				Value: tagValue,
-			})
+		if tagValue == nil {
+			continue
 		}
+		buf = append(buf, &modelv1.Tag{
+			Key:   tagName,
+			Value: tagValue,
+		})
 	}
 	return buf
+}
+
+func (b *blockCursorBuilder) orderedTagNamesForFilter(projections []model.TagProjection) []string {
+	// IMPORTANT: The logical tag filter matcher relies on stable tag ordering,
+	// because it uses schema tag refs to locate tag values by index (TagFamily.Tags[idx]).
+	// Iterating a Go map is randomized, which makes results flaky.
+	if len(projections) > 0 {
+		seenTagNames := make(map[string]struct{}, len(b.block.tags))
+		tagNames := make([]string, 0, len(b.block.tags))
+		for _, proj := range projections {
+			for _, tagName := range proj.Names {
+				if _, exists := seenTagNames[tagName]; exists {
+					continue
+				}
+				if _, exists := b.block.tags[tagName]; !exists {
+					continue
+				}
+				tagNames = append(tagNames, tagName)
+				seenTagNames[tagName] = struct{}{}
+			}
+		}
+		return tagNames
+	}
+
+	tagNames := make([]string, 0, len(b.block.tags))
+	for tagName := range b.block.tags {
+		tagNames = append(tagNames, tagName)
+	}
+	sort.Strings(tagNames)
+	return tagNames
 }
 
 func (b *blockCursorBuilder) appendElement(index int, hash uint64, dataBytes []byte) {

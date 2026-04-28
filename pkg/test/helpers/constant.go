@@ -31,10 +31,21 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 )
 
+// Test deployment modes carried in SharedContext.Mode.
+const (
+	// ModeStandalone marks a single-process integration suite where the liaison
+	// and data node share an in-process schema cache.
+	ModeStandalone = "standalone"
+	// ModeDistributed marks a multi-process integration suite where the liaison
+	// and data nodes have separate schema caches.
+	ModeDistributed = "distributed"
+)
+
 // SharedContext is the context shared between test cases in the integration testing.
 type SharedContext struct {
-	Connection *grpclib.ClientConn
 	BaseTime   time.Time
+	Connection *grpclib.ClientConn
+	Mode       string
 }
 
 // Args is a wrapper seals all necessary info for table specs.

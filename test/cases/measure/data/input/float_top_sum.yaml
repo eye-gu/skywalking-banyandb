@@ -15,41 +15,24 @@
 # specific language governing permissions and limitations
 # under the License.
 
-lists:
-- items:
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_3
-    - key: entity_id
-      value:
-        str:
-          value: entity_5
-    value:
-      float:
-        value: 450.875
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_1
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-    value:
-      float:
-        value: 325.125
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_2
-    - key: entity_id
-      value:
-        str:
-          value: entity_4
-    value:
-      float:
-        value: 300
+name: "service_instance_float_metric"
+groups: ["sw_metric"]
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["entity_id"]
+fieldProjection:
+  names: ["value"]
+groupBy:
+  tagProjection:
+    tagFamilies:
+    - name: "default"
+      tags: ["entity_id"]
+  fieldName: "value"
+agg:
+  function: "AGGREGATION_FUNCTION_SUM"
+  fieldName: "value"
+top:
+  number: 3
+  fieldName: "value"
+  fieldValueSort: "SORT_DESC"

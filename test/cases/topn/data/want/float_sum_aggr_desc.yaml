@@ -28,7 +28,7 @@ lists:
           value: entity_5
     value:
       float:
-        value: 852.0409999999999
+        value: 450.875
   - entity:
     - key: service_id
       value:
@@ -40,7 +40,7 @@ lists:
           value: entity_1
     value:
       float:
-        value: 551.083
+        value: 325.125
   - entity:
     - key: service_id
       value:
@@ -49,7 +49,7 @@ lists:
     - key: entity_id
       value:
         str:
-          value: entity_2
+          value: entity_4
     value:
       float:
-        value: 381.0
+        value: 300

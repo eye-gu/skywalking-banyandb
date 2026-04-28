@@ -62,4 +62,11 @@ var topnEntries = []any{
 	g.Entry("float64 min top3 order by asc", helpers.Args{Input: "float_min_aggr_asc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("float64 mean top3 order by desc", helpers.Args{Input: "float_mean_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("float64 count top3 order by desc", helpers.Args{Input: "float_count_aggr_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
-)
+}
+
+// RegisterTable registers the topn test table with the given description.
+func RegisterTable(description string) bool {
+	return g.DescribeTable(description, append([]any{verify}, topnEntries...)...)
+}
+
+var _ = RegisterTable("TopN Tests")

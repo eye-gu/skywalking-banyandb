@@ -27,14 +27,15 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
 var (
 	_ logical.UnresolvedPlan = (*unresolvedGroup)(nil)
-	_ logical.Plan           = (*groupBy)(nil)
+	_ logical.Plan           = (*topOp[int64])(nil)
+	_ logical.Plan           = (*topOp[float64])(nil)
 )
 
 type unresolvedTop struct {
@@ -67,43 +68,46 @@ func (gba *unresolvedTop) Analyze(measureSchema logical.Schema) (logical.Plan, e
 	}
 	fieldRef := fieldRefs[0]
 	switch fieldRef.Spec.Spec.FieldType {
+	case databasev1.FieldType_FIELD_TYPE_INT:
+		return newTopOp[int64](gba, prevPlan, fieldRef, reverted), nil
 	case databasev1.FieldType_FIELD_TYPE_FLOAT:
 		return newTopOp[float64](gba, prevPlan, fieldRef, reverted), nil
 	default:
-		return newTopOp[int64](gba, prevPlan, fieldRef, reverted), nil
+		return nil, errors.WithMessagef(errUnsupportedAggregationField,
+			"top: field %s has unsupported type %s", fieldRef.Spec.Spec.GetName(), fieldRef.Spec.Spec.GetFieldType().String())
 	}
 }
 
-func newTopOp[N aggregation.Number](gba *unresolvedTop, prevPlan logical.Plan, fieldRef *logical.FieldRef, reverted bool) *topOp[N] {
-	return &topOp[N]{
+func newTopOp[K measure.TopSortKey](gba *unresolvedTop, prevPlan logical.Plan, fieldRef *logical.FieldRef, reverted bool) *topOp[K] {
+	return &topOp[K]{
 		Parent: &logical.Parent{
 			UnresolvedInput: gba.unresolvedInput,
 			Input:           prevPlan,
 		},
-		topNStream: NewTopQueue[N](int(gba.top.Number), reverted),
+		topNStream: NewTopQueue[K](int(gba.top.Number), reverted),
 		fieldRef:   fieldRef,
 	}
 }
 
-type topOp[N aggregation.Number] struct {
+type topOp[K measure.TopSortKey] struct {
 	*logical.Parent
-	topNStream *TopQueue[N]
+	topNStream *TopQueue[K]
 	fieldRef   *logical.FieldRef
 }
 
-func (g *topOp[N]) String() string {
+func (g *topOp[K]) String() string {
 	return fmt.Sprintf("%s top %s", g.Input, g.topNStream.String())
 }
 
-func (g *topOp[N]) Children() []logical.Plan {
+func (g *topOp[K]) Children() []logical.Plan {
 	return []logical.Plan{g.Input}
 }
 
-func (g *topOp[N]) Schema() logical.Schema {
+func (g *topOp[K]) Schema() logical.Schema {
 	return g.Input.Schema()
 }
 
-func (g *topOp[N]) Execute(ec context.Context) (mit executor.MIterator, err error) {
+func (g *topOp[K]) Execute(ec context.Context) (mit executor.MIterator, err error) {
 	iter, err := g.Parent.Input.(executor.MeasureExecutable).Execute(ec)
 	if err != nil {
 		return nil, err
@@ -112,44 +116,50 @@ func (g *topOp[N]) Execute(ec context.Context) (mit executor.MIterator, err erro
 		err = multierr.Append(err, iter.Close())
 	}()
 	g.topNStream.Purge()
+	var zero K
+	var extractValue func(idp *measurev1.InternalDataPoint) K
+	switch any(zero).(type) {
+	case float64:
+		extractValue = func(idp *measurev1.InternalDataPoint) K {
+			return K(idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].
+				GetValue().GetFloat().GetValue())
+		}
+	default:
+		extractValue = func(idp *measurev1.InternalDataPoint) K {
+			return K(idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].
+				GetValue().GetInt().GetValue())
+		}
+	}
 	for iter.Next() {
 		dpp := iter.Current()
 		for _, idp := range dpp {
-			fieldValue := idp.GetDataPoint().GetFields()[g.fieldRef.Spec.FieldIdx].GetValue()
-			g.topNStream.Insert(extractTopElementValue[N](idp, fieldValue))
+			g.topNStream.Insert(NewTopElement[K](idp, extractValue(idp)))
 		}
 	}
-	return newTopIterator(g.topNStream.Elements()), nil
+	return newTopIterator[K](g.topNStream.Elements()), nil
 }
 
-func extractTopElementValue[N aggregation.Number](idp *measurev1.InternalDataPoint, fieldValue *modelv1.FieldValue) TopElement[N] {
-	if fieldValue.GetFloat() != nil {
-		return any(NewTopElement[float64](idp, fieldValue.GetFloat().GetValue())).(TopElement[N])
-	}
-	return any(NewTopElement[int64](idp, fieldValue.GetInt().GetValue())).(TopElement[N])
-}
-
-type topIterator[N aggregation.Number] struct {
-	elements []TopElement[N]
+type topIterator[K measure.TopSortKey] struct {
+	elements []TopElement[K]
 	index    int
 }
 
-func newTopIterator[N aggregation.Number](elements []TopElement[N]) executor.MIterator {
-	return &topIterator[N]{
+func newTopIterator[K measure.TopSortKey](elements []TopElement[K]) executor.MIterator {
+	return &topIterator[K]{
 		elements: elements,
 		index:    -1,
 	}
 }
 
-func (ami *topIterator[N]) Next() bool {
+func (ami *topIterator[K]) Next() bool {
 	ami.index++
 	return ami.index < len(ami.elements)
 }
 
-func (ami *topIterator[N]) Current() []*measurev1.InternalDataPoint {
+func (ami *topIterator[K]) Current() []*measurev1.InternalDataPoint {
 	return []*measurev1.InternalDataPoint{ami.elements[ami.index].idp}
 }
 
-func (ami *topIterator[N]) Close() error {
+func (ami *topIterator[K]) Close() error {
 	return nil
 }

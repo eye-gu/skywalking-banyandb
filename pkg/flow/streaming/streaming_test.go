@@ -155,7 +155,7 @@ var _ = g.Describe("Streaming", func() {
 					return convert.HashStr(record.Data().(flow.Data)[2].(string))
 				}),
 					WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
-						return record.Data().(flow.Data)[1]
+						return record.Data().(flow.Data)[1].(int64)
 					}), OrderBy(ASC), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 						return record.Data().(flow.Data)[0].(string)
 					}), WithFieldType(databasev1.FieldType_FIELD_TYPE_INT)).
@@ -220,7 +220,7 @@ var _ = g.Describe("Streaming", func() {
 				TopN(3, WithKeyExtractor(func(record flow.StreamRecord) uint64 {
 					return convert.HashStr(record.Data().(flow.Data)[2].(string))
 				}), WithSortKeyExtractor(func(record flow.StreamRecord) interface{} {
-					return record.Data().(flow.Data)[1]
+					return record.Data().(flow.Data)[1].(int64)
 				}), WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 					return record.Data().(flow.Data)[0].(string)
 				}), WithFieldType(databasev1.FieldType_FIELD_TYPE_INT)).

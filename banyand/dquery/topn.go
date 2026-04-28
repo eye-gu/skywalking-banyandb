@@ -20,6 +20,7 @@ package dquery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"go.uber.org/multierr"
@@ -37,7 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	pkgquery "github.com/apache/skywalking-banyandb/pkg/query"
-	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 )
 
 const defaultTopNQueryTimeout = 10 * time.Second
@@ -49,29 +49,30 @@ type topNQueryProcessor struct {
 	*bus.UnImplementedHealthyListener
 }
 
-func (t *topNQueryProcessor) getTopNFieldType(ctx context.Context, group, topNName string) databasev1.FieldType {
+func (t *topNQueryProcessor) getTopNFieldType(ctx context.Context, group, topNName string) (databasev1.FieldType, error) {
 	topNAgg, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, &commonv1.Metadata{
 		Group: group,
 		Name:  topNName,
 	})
 	if err != nil {
-		t.log.Warn().Err(err).Str("group", group).Str("topN", topNName).Msg("failed to get topN aggregation")
-		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, fmt.Errorf("failed to get topN aggregation %s/%s: %w", group, topNName, err)
 	}
 	sourceMeasure := topNAgg.GetSourceMeasure()
 	measureSchema, err := t.metaService.MeasureRegistry().GetMeasure(ctx, sourceMeasure)
 	if err != nil {
-		t.log.Warn().Err(err).Str("measure", sourceMeasure.GetName()).Msg("failed to get source measure")
-		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+		return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, fmt.Errorf("failed to get source measure %s: %w", sourceMeasure.GetName(), err)
 	}
 	fieldName := topNAgg.GetFieldName()
 	for _, field := range measureSchema.GetFields() {
 		if field.GetName() == fieldName {
-			return field.GetFieldType()
+			ft := field.GetFieldType()
+			if ft != databasev1.FieldType_FIELD_TYPE_INT && ft != databasev1.FieldType_FIELD_TYPE_FLOAT {
+				return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, fmt.Errorf("unsupported field type %s for field %s in topN aggregation", ft.String(), fieldName)
+			}
+			return ft, nil
 		}
 	}
-	t.log.Warn().Str("field", fieldName).Str("measure", sourceMeasure.GetName()).Msg("field not found in measure")
-	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED
+	return databasev1.FieldType_FIELD_TYPE_UNSPECIFIED, fmt.Errorf("field %s not found in measure %s", fieldName, sourceMeasure.GetName())
 }
 
 func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -131,10 +132,6 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			span.Stop()
 		}()
 	}
-	originalTopN := request.GetTopN()
-	// Set topN to 0 to disable truncation on data nodes for all aggregation functions.
-	// This ensures coordinator-side aggregation can see all relevant candidates.
-	request.TopN = 0
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
@@ -143,17 +140,22 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		return
 	}
 	var allErr error
-	fieldType := t.getTopNFieldType(ctx, request.Groups[0], request.GetName())
+	fieldType, fieldTypeErr := t.getTopNFieldType(ctx, request.Groups[0], request.GetName())
+	if fieldTypeErr != nil {
+		resp = bus.NewMessage(now, common.NewError("failed to determine field type for topN query %s: %v", request.GetName(), fieldTypeErr))
+		return
+	}
 	var lists []*measurev1.TopNList
+	var responseCount int
 	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
-		lists, allErr = processTopNResponse(ff, originalTopN, agg, request.GetFieldValueSort(),
+		lists, responseCount, allErr = processTopNResponse(ff, request.GetTopN(), agg, request.GetFieldValueSort(),
 			measure.CreateTopNPostProcessorFloat, measure.FieldValueToFloat)
 	} else {
-		lists, allErr = processTopNResponse(ff, originalTopN, agg, request.GetFieldValueSort(),
+		lists, responseCount, allErr = processTopNResponse(ff, request.GetTopN(), agg, request.GetFieldValueSort(),
 			measure.CreateTopNPostProcessorInt, measure.FieldValueToInt)
 	}
 	if span != nil {
-		span.Tagf("response_count", "%d", len(ff))
+		span.Tagf("response_count", "%d", responseCount)
 	}
 	if allErr != nil {
 		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
@@ -215,17 +217,18 @@ func (s *sortedTopNList) Val() *comparableTopNItem {
 	return &comparableTopNItem{s.Items[s.index-1]}
 }
 
-func processTopNResponse[N aggregation.Number](
+func processTopNResponse[K measure.TopSortKey](
 	ff []bus.Future,
 	topN int32,
 	agg modelv1.AggregationFunction,
 	sort modelv1.Sort,
-	createAggregator func(int32, modelv1.AggregationFunction, modelv1.Sort) measure.PostProcessor[N],
-	convertValue func(*modelv1.FieldValue) N,
-) ([]*measurev1.TopNList, error) {
+	createAggregator func(int32, modelv1.AggregationFunction, modelv1.Sort) measure.PostProcessor[K],
+	convertValue func(*modelv1.FieldValue) K,
+) ([]*measurev1.TopNList, int, error) {
 	aggregator := createAggregator(topN, agg, sort)
 	var tags []string
 	var allErr error
+	var responseCount int
 	for _, f := range ff {
 		if m, getErr := f.Get(); getErr != nil {
 			allErr = multierr.Append(allErr, getErr)
@@ -234,6 +237,7 @@ func processTopNResponse[N aggregation.Number](
 			if d == nil {
 				continue
 			}
+			responseCount++
 			topNResp := d.(*measurev1.TopNResponse)
 			for _, l := range topNResp.Lists {
 				for _, tn := range l.Items {
@@ -253,13 +257,13 @@ func processTopNResponse[N aggregation.Number](
 		}
 	}
 	if tags == nil {
-		return nil, allErr
+		return nil, responseCount, allErr
 	}
 	lists, err := aggregator.Val(tags)
 	if err != nil {
-		return nil, multierr.Append(allErr, err)
+		return nil, responseCount, multierr.Append(allErr, err)
 	}
-	return lists, allErr
+	return lists, responseCount, allErr
 }
 
 func (t *topNQueryProcessor) validateRequest(request *measurev1.TopNRequest) error {
@@ -268,6 +272,12 @@ func (t *topNQueryProcessor) validateRequest(request *measurev1.TopNRequest) err
 	}
 	if request.GetAgg() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		return errors.New("unspecified requested aggregation function")
+	}
+	if len(request.GetGroups()) == 0 {
+		return errors.New("at least one group is required")
+	}
+	if request.GetTopN() <= 0 {
+		return errors.New("topN must be positive")
 	}
 	return nil
 }

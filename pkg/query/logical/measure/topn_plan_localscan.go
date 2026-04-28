@@ -199,6 +199,11 @@ func (ei *topNMIterator) Next() bool {
 	decoder := measure.GenerateTopNValuesDecoder()
 	defer measure.ReleaseTopNValuesDecoder(decoder)
 
+	topNValueFloat := measure.GenerateTopNValueFloat()
+	defer measure.ReleaseTopNValueFloat(topNValueFloat)
+	topNValueInt := measure.GenerateTopNValueInt()
+	defer measure.ReleaseTopNValueInt(topNValueInt)
+
 	for i := range r.Timestamps {
 		fv := r.Fields[0].Values[i]
 		bd := fv.GetBinaryData()
@@ -216,27 +221,23 @@ func (ei *topNMIterator) Next() bool {
 		}
 
 		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
-			topNValue := measure.GenerateTopNValueFloat()
-			defer measure.ReleaseTopNValueFloat(topNValue)
-			topNValue.Reset()
-			unmarshalErr := topNValue.Unmarshal(bd, decoder)
+			topNValueFloat.Reset()
+			unmarshalErr := topNValueFloat.Unmarshal(bd, decoder)
 			if unmarshalErr != nil {
 				ei.err = multierr.Append(ei.err, errors.WithMessagef(unmarshalErr, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 				continue
 			}
-			if procErr := processTopNValue(ei, topNValue, r, i, ts); procErr != nil {
+			if procErr := processTopNValue(ei, topNValueFloat, r, i, ts); procErr != nil {
 				ei.err = multierr.Append(ei.err, procErr)
 			}
 		} else {
-			topNValue := measure.GenerateTopNValueInt()
-			defer measure.ReleaseTopNValueInt(topNValue)
-			topNValue.Reset()
-			unmarshalErr := topNValue.Unmarshal(bd, decoder)
+			topNValueInt.Reset()
+			unmarshalErr := topNValueInt.Unmarshal(bd, decoder)
 			if unmarshalErr != nil {
 				ei.err = multierr.Append(ei.err, errors.WithMessagef(unmarshalErr, "failed to unmarshal topN values[%d]:[%s]%s", i, ts, hex.EncodeToString(fv.GetBinaryData())))
 				continue
 			}
-			if procErr := processTopNValue(ei, topNValue, r, i, ts); procErr != nil {
+			if procErr := processTopNValue(ei, topNValueInt, r, i, ts); procErr != nil {
 				ei.err = multierr.Append(ei.err, procErr)
 			}
 		}
@@ -244,7 +245,7 @@ func (ei *topNMIterator) Next() bool {
 	return true
 }
 
-func processTopNValue[N aggregation.Number](ei *topNMIterator, topNValue *measure.TopNValue[N], r *model.MeasureResult, idx int, ts *timestamppb.Timestamp) error {
+func processTopNValue[K measure.TopSortKey](ei *topNMIterator, topNValue *measure.TopNValue[K], r *model.MeasureResult, idx int, ts *timestamppb.Timestamp) error {
 	shardID := uint32(0)
 	if idx < len(r.ShardIDs) {
 		shardID = uint32(r.ShardIDs[idx])

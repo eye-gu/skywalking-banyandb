@@ -15,41 +15,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-lists:
-- items:
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_3
-    - key: entity_id
-      value:
-        str:
-          value: entity_5
-    value:
-      float:
-        value: 450.875
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_1
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-    value:
-      float:
-        value: 325.125
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_2
-    - key: entity_id
-      value:
-        str:
-          value: entity_4
-    value:
-      float:
-        value: 300
+
+SELECT TOP 3 value ASC, id, entity_id, service_id, total::field, value::field FROM MEASURE service_instance_float_metric IN sw_metric
+TIME > '-15m'

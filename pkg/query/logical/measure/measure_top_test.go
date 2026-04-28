@@ -25,7 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
 
-func TestTopNStreamInt(t *testing.T) {
+func TestTopNStream(t *testing.T) {
 	type fields struct {
 		n        int
 		reverted bool
@@ -77,7 +77,7 @@ func TestTopNStreamInt(t *testing.T) {
 	}
 }
 
-func TestTopNStreamFloat(t *testing.T) {
+func TestTopNStreamFloat64(t *testing.T) {
 	type fields struct {
 		n        int
 		reverted bool
@@ -92,25 +92,25 @@ func TestTopNStreamFloat(t *testing.T) {
 		fields fields
 	}{
 		{
-			name: "top 3",
+			name: "float64 top 3",
 			fields: fields{
 				n: 3,
 			},
 			args: args{
-				elements: []float64{1.1, 3.3, 6.6, 8.8, 4.4, 5.5},
+				elements: []float64{1.5, 3.2, 6.7, 8.1, 4.3, 5.9},
 			},
-			wants: []float64{8.8, 6.6, 5.5},
+			wants: []float64{8.1, 6.7, 5.9},
 		},
 		{
-			name: "bottom 3",
+			name: "float64 bottom 3",
 			fields: fields{
 				n:        3,
 				reverted: true,
 			},
 			args: args{
-				elements: []float64{1.1, 3.3, 6.6, 8.8, 4.4, 5.5},
+				elements: []float64{1.5, 3.2, 6.7, 8.1, 4.3, 5.9},
 			},
-			wants: []float64{1.1, 3.3, 4.4},
+			wants: []float64{1.5, 3.2, 4.3},
 		},
 	}
 	for _, tt := range tests {

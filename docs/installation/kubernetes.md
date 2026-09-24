@@ -161,6 +161,10 @@ The BanyanDB server would be listening on the `0.0.0.0:17912` to access gRPC req
 
 At the same time, the BanyanDB server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server serves the HTTP API under `/api`, which is used by the CLI (`bydbctl`), HTTP clients, and the standalone Canopy web console.
 
+## Web Console (Canopy)
+
+BanyanDB itself serves no web console: port `17913` exposes the HTTP API only. To browse data from a browser, add `--set canopy.enabled=true` to the `helm install` command — the chart then deploys the [Canopy](../interacting/canopy.md) console alongside the database, in both standalone and cluster mode. Canopy proxies the API, so exposing its service (or `canopy.ingress`) gives you the console and the HTTP API on one entry point; refer to the [chart README](https://github.com/apache/skywalking-banyandb-helm/blob/master/README.md) for the credential, ingress and image options.
+
 ## Uninstall
 
 - Uninstall BanyanDB using the following command:

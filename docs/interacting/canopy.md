@@ -2,7 +2,7 @@
 
 Canopy is the official web console of BanyanDB. It is a standalone web application — a React single-page app served by a Node.js BFF — that connects to the BanyanDB HTTP API (the gRPC-gateway on port `17913`) and lets you browse schemas, query measures, streams, traces and properties from a browser.
 
-Canopy ships as a separate Docker image, `apache/skywalking-banyandb:<version>-canopy`, and is the replacement for the embedded UI that was removed from the BanyanDB server in 0.12.0. The server itself no longer serves any web console; its HTTP port (`17913`) exposes only the client API under `/api`.
+Canopy ships as a separate Docker image, `apache/skywalking-banyandb:<version>-canopy`, and runs as its own process alongside a BanyanDB server. BanyanDB itself exposes only the client API under `/api` on port `17913`. Canopy is also published as a tarball, `skywalking-banyandb-<version>-canopy.tgz` — see [Get Binaries](../installation/binaries.md) for the download location and the unpack-and-run steps.
 
 ## Run with Docker
 
@@ -53,4 +53,4 @@ docker run --rm apache/skywalking-banyandb:<version>-canopy \
 
 ## Run from source
 
-To run the console from a checkout — for local development, or to work on Canopy itself — follow the two-terminal dev setup in the [Canopy README](https://github.com/apache/skywalking-banyandb/tree/main/canopy). Its [`.env.example`](https://github.com/apache/skywalking-banyandb/blob/main/canopy/.env.example) documents every setting: session secret, user file, reverse-proxy base path and metrics monitoring target.
+The [Canopy README](https://github.com/apache/skywalking-banyandb/tree/main/canopy) covers running from a checkout in two shapes: the two-terminal dev setup (SPA dev server on `5173`, BFF on `4000`), and a production build where the BFF alone serves the built SPA on `4000`. Its [`.env.example`](https://github.com/apache/skywalking-banyandb/blob/main/canopy/.env.example) documents every setting: session secret, user file, reverse-proxy base path and metrics monitoring target.

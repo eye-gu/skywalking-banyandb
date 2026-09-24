@@ -53,6 +53,7 @@ Release Notes.
 - Remove accidentally committed local design notes from the repository root.
 - Remove the accidentally committed `test_table` ELF binary from the source tree.
 - Update NOTICE copyright year to 2026.
+- [Breaking Change] Remove the legacy embedded web UI (`ui/`) from the BanyanDB binaries, Docker images and release packages. Use the standalone [Canopy](docs/interacting/canopy.md) web console instead; the HTTP port (`17913`) now serves only the HTTP API under `/api`. The `-slim` builds now only stub out the memory-pool diagnostic tracking.
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
 - Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
